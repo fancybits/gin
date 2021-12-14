@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin/testdata/protoexample"
-	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 type appkey struct {
@@ -35,7 +35,7 @@ type QueryTest struct {
 }
 
 type FooStruct struct {
-	Foo string `msgpack:"foo" json:"foo" form:"foo" xml:"foo" binding:"required"`
+	Foo string `msgpack:"foo" json:"foo" form:"foo" xml:"foo" binding:"required,max=32"`
 }
 
 type FooBarStruct struct {
@@ -179,6 +179,20 @@ func TestBindingJSON(t *testing.T) {
 		JSON, "json",
 		"/", "/",
 		`{"foo": "bar"}`, `{"bar": "foo"}`)
+}
+
+func TestBindingJSONSlice(t *testing.T) {
+	EnableDecoderDisallowUnknownFields = true
+	defer func() {
+		EnableDecoderDisallowUnknownFields = false
+	}()
+
+	testBodyBindingSlice(t, JSON, "json", "/", "/", `[]`, ``)
+	testBodyBindingSlice(t, JSON, "json", "/", "/", `[{"foo": "123"}]`, `[{}]`)
+	testBodyBindingSlice(t, JSON, "json", "/", "/", `[{"foo": "123"}]`, `[{"foo": ""}]`)
+	testBodyBindingSlice(t, JSON, "json", "/", "/", `[{"foo": "123"}]`, `[{"foo": 123}]`)
+	testBodyBindingSlice(t, JSON, "json", "/", "/", `[{"foo": "123"}]`, `[{"bar": 123}]`)
+	testBodyBindingSlice(t, JSON, "json", "/", "/", `[{"foo": "123"}]`, `[{"foo": "123456789012345678901234567890123"}]`)
 }
 
 func TestBindingJSONUseNumber(t *testing.T) {
@@ -818,7 +832,6 @@ func testFormBindingEmbeddedStruct(t *testing.T, method, path, badPath, body, ba
 	assert.Equal(t, 1, obj.Page)
 	assert.Equal(t, 2, obj.Size)
 	assert.Equal(t, "test-appkey", obj.Appkey)
-
 }
 
 func testFormBinding(t *testing.T, method, path, badPath, body, badBody string) {
@@ -1181,6 +1194,20 @@ func testBodyBinding(t *testing.T, b Binding, name, path, badPath, body, badBody
 	assert.Error(t, err)
 }
 
+func testBodyBindingSlice(t *testing.T, b Binding, name, path, badPath, body, badBody string) {
+	assert.Equal(t, name, b.Name())
+
+	var obj1 []FooStruct
+	req := requestWithBody("POST", path, body)
+	err := b.Bind(req, &obj1)
+	assert.NoError(t, err)
+
+	var obj2 []FooStruct
+	req = requestWithBody("POST", badPath, badBody)
+	err = JSON.Bind(req, &obj2)
+	assert.Error(t, err)
+}
+
 func testBodyBindingStringMap(t *testing.T, b Binding, path, badPath, body, badBody string) {
 	obj := make(map[string]string)
 	req := requestWithBody("POST", path, body)
@@ -1311,6 +1338,13 @@ func testProtoBodyBindingFail(t *testing.T, b Binding, name, path, badPath, body
 	req.Header.Add("Content-Type", MIMEPROTOBUF)
 	err := b.Bind(req, &obj)
 	assert.Error(t, err)
+
+	invalid_obj := FooStruct{}
+	req.Body = ioutil.NopCloser(strings.NewReader(`{"msg":"hello"}`))
+	req.Header.Add("Content-Type", MIMEPROTOBUF)
+	err = b.Bind(req, &invalid_obj)
+	assert.Error(t, err)
+	assert.Equal(t, err.Error(), "obj is not ProtoMessage")
 
 	obj = protoexample.Test{}
 	req = requestWithBody("POST", badPath, badBody)

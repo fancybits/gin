@@ -70,7 +70,7 @@ type LogFormatterParams struct {
 	Path string
 	// ErrorMessage is set if error has occurred in processing the request.
 	ErrorMessage string
-	// isTerm shows whether does gin's output descriptor refers to a terminal.
+	// isTerm shows whether gin's output descriptor refers to a terminal.
 	isTerm bool
 	// BodySize is the size of the Response Body
 	BodySize int
@@ -138,8 +138,7 @@ var defaultLogFormatter = func(param LogFormatterParams) string {
 	}
 
 	if param.Latency > time.Minute {
-		// Truncate in a golang < 1.8 safe way
-		param.Latency = param.Latency - param.Latency%time.Second
+		param.Latency = param.Latency.Truncate(time.Second)
 	}
 	return fmt.Sprintf("[GIN] %v |%s %3d %s| %13v | %15s |%s %-7s %s %#v\n%s",
 		param.TimeStamp.Format("2006/01/02 - 15:04:05"),
@@ -179,7 +178,7 @@ func ErrorLoggerT(typ ErrorType) HandlerFunc {
 }
 
 // Logger instances a Logger middleware that will write the logs to gin.DefaultWriter.
-// By default gin.DefaultWriter = os.Stdout.
+// By default, gin.DefaultWriter = os.Stdout.
 func Logger() HandlerFunc {
 	return LoggerWithConfig(LoggerConfig{})
 }

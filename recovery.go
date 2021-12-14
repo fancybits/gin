@@ -36,7 +36,7 @@ func Recovery() HandlerFunc {
 	return RecoveryWithWriter(DefaultErrorWriter)
 }
 
-//CustomRecovery returns a middleware that recovers from any panics and calls the provided handle func to handle it.
+// CustomRecovery returns a middleware that recovers from any panics and calls the provided handle func to handle it.
 func CustomRecovery(handle RecoveryFunc) HandlerFunc {
 	return RecoveryWithWriter(DefaultErrorWriter, handle)
 }
@@ -64,7 +64,8 @@ func CustomRecoveryWithWriter(out io.Writer, handle RecoveryFunc) HandlerFunc {
 				if err, ok := err.(error); ok && errors.Is(err, syscall.EPIPE) {
 					brokenPipe = true
 				} else if ne, ok := err.(*net.OpError); ok {
-					if se, ok := ne.Err.(*os.SyscallError); ok {
+					var se *os.SyscallError
+					if errors.As(ne, &se) {
 						if strings.Contains(strings.ToLower(se.Error()), "broken pipe") || strings.Contains(strings.ToLower(se.Error()), "connection reset by peer") {
 							brokenPipe = true
 						}
@@ -160,7 +161,7 @@ func function(pc uintptr) []byte {
 	//	runtime/debug.*T·ptrmethod
 	// and want
 	//	*T.ptrmethod
-	// Also the package path might contains dot (e.g. code.google.com/...),
+	// Also the package path might contain dot (e.g. code.google.com/...),
 	// so first eliminate the path prefix
 	if lastSlash := bytes.LastIndex(name, slash); lastSlash >= 0 {
 		name = name[lastSlash+1:]
@@ -172,7 +173,7 @@ func function(pc uintptr) []byte {
 	return name
 }
 
+// timeFormat returns a customized time string for logger.
 func timeFormat(t time.Time) string {
-	timeString := t.Format("2006/01/02 - 15:04:05")
-	return timeString
+	return t.Format("2006/01/02 - 15:04:05")
 }
