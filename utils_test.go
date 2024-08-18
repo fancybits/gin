@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -142,4 +142,9 @@ func TestMarshalXMLforH(t *testing.T) {
 	var x xml.StartElement
 	e := h.MarshalXML(enc, x)
 	assert.Error(t, e)
+}
+
+func TestIsASCII(t *testing.T) {
+	assert.Equal(t, isASCII("test"), true)
+	assert.Equal(t, isASCII("🧡💛💚💙💜"), false)
 }

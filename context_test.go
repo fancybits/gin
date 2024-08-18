@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -29,12 +30,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var _ context.Context = &Context{}
+var _ context.Context = (*Context)(nil)
+
+var errTestRender = errors.New("TestRender")
 
 // Unit tests TODO
 // func (c *Context) File(filepath string) {
 // func (c *Context) Negotiate(code int, config Negotiate) {
-// BAD case: func (c *Context) Render(code int, render render.Render, obj ...interface{}) {
+// BAD case: func (c *Context) Render(code int, render render.Render, obj ...any) {
 // test that information is not leaked when reusing Contexts (using the Pool)
 
 func createMultipartRequest() *http.Request {
@@ -145,13 +148,13 @@ func TestSaveUploadedCreateFailed(t *testing.T) {
 
 func TestContextReset(t *testing.T) {
 	router := New()
-	c := router.allocateContext()
+	c := router.allocateContext(0)
 	assert.Equal(t, c.engine, router)
 
 	c.index = 2
 	c.Writer = &responseWriter{ResponseWriter: httptest.NewRecorder()}
 	c.Params = Params{Param{}}
-	c.Error(errors.New("test")) // nolint: errcheck
+	c.Error(errors.New("test")) //nolint: errcheck
 	c.Set("foo", "bar")
 	c.reset()
 
@@ -211,7 +214,7 @@ func TestContextSetGetValues(t *testing.T) {
 	c.Set("uint64", uint64(42))
 	c.Set("float32", float32(4.2))
 	c.Set("float64", 4.2)
-	var a interface{} = 1
+	var a any = 1
 	c.Set("intInterface", a)
 
 	assert.Exactly(t, c.MustGet("string").(string), "this is a string")
@@ -286,7 +289,7 @@ func TestContextGetStringSlice(t *testing.T) {
 
 func TestContextGetStringMap(t *testing.T) {
 	c, _ := CreateTestContext(httptest.NewRecorder())
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	m["foo"] = 1
 	c.Set("map", m)
 
@@ -642,25 +645,21 @@ func TestContextBodyAllowedForStatus(t *testing.T) {
 	assert.True(t, true, bodyAllowedForStatus(http.StatusInternalServerError))
 }
 
-type TestPanicRender struct{}
+type TestRender struct{}
 
-func (*TestPanicRender) Render(http.ResponseWriter) error {
-	return errors.New("TestPanicRender")
+func (*TestRender) Render(http.ResponseWriter) error {
+	return errTestRender
 }
 
-func (*TestPanicRender) WriteContentType(http.ResponseWriter) {}
+func (*TestRender) WriteContentType(http.ResponseWriter) {}
 
-func TestContextRenderPanicIfErr(t *testing.T) {
-	defer func() {
-		r := recover()
-		assert.Equal(t, "TestPanicRender", fmt.Sprint(r))
-	}()
+func TestContextRenderIfErr(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := CreateTestContext(w)
 
-	c.Render(http.StatusOK, &TestPanicRender{})
+	c.Render(http.StatusOK, &TestRender{})
 
-	assert.Fail(t, "Panic not detected")
+	assert.Equal(t, errorMsgs{&Error{Err: errTestRender, Type: 1}}, c.Errors)
 }
 
 // Tests that the response is serialized as JSON
@@ -1033,6 +1032,33 @@ func TestContextRenderAttachment(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("attachment; filename=\"%s\"", newFilename), w.Header().Get("Content-Disposition"))
 }
 
+func TestContextRenderAndEscapeAttachment(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+	maliciousFilename := "tampering_field.sh\"; \\\"; dummy=.go"
+	actualEscapedResponseFilename := "tampering_field.sh\\\"; \\\\\\\"; dummy=.go"
+
+	c.Request, _ = http.NewRequest("GET", "/", nil)
+	c.FileAttachment("./gin.go", maliciousFilename)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "func New() *Engine {")
+	assert.Equal(t, fmt.Sprintf("attachment; filename=\"%s\"", actualEscapedResponseFilename), w.Header().Get("Content-Disposition"))
+}
+
+func TestContextRenderUTF8Attachment(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+	newFilename := "new🧡_filename.go"
+
+	c.Request, _ = http.NewRequest("GET", "/", nil)
+	c.FileAttachment("./gin.go", newFilename)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), "func New() *Engine {")
+	assert.Equal(t, `attachment; filename*=UTF-8''`+url.QueryEscape(newFilename), w.Header().Get("Content-Disposition"))
+}
+
 // TestContextRenderYAML tests that the response is serialized as YAML
 // and Content-Type is set to application/x-yaml
 func TestContextRenderYAML(t *testing.T) {
@@ -1044,6 +1070,19 @@ func TestContextRenderYAML(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.Equal(t, "foo: bar\n", w.Body.String())
 	assert.Equal(t, "application/x-yaml; charset=utf-8", w.Header().Get("Content-Type"))
+}
+
+// TestContextRenderTOML tests that the response is serialized as TOML
+// and Content-Type is set to application/toml
+func TestContextRenderTOML(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+
+	c.TOML(http.StatusCreated, H{"foo": "bar"})
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, "foo = 'bar'\n", w.Body.String())
+	assert.Equal(t, "application/toml; charset=utf-8", w.Header().Get("Content-Type"))
 }
 
 // TestContextRenderProtoBuf tests that the response is serialized as ProtoBuf
@@ -1166,6 +1205,36 @@ func TestContextNegotiationWithXML(t *testing.T) {
 	assert.Equal(t, "application/xml; charset=utf-8", w.Header().Get("Content-Type"))
 }
 
+func TestContextNegotiationWithYAML(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "", nil)
+
+	c.Negotiate(http.StatusOK, Negotiate{
+		Offered: []string{MIMEYAML, MIMEXML, MIMEJSON, MIMETOML},
+		Data:    H{"foo": "bar"},
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "foo: bar\n", w.Body.String())
+	assert.Equal(t, "application/x-yaml; charset=utf-8", w.Header().Get("Content-Type"))
+}
+
+func TestContextNegotiationWithTOML(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+	c.Request, _ = http.NewRequest("POST", "", nil)
+
+	c.Negotiate(http.StatusOK, Negotiate{
+		Offered: []string{MIMETOML, MIMEXML, MIMEJSON, MIMEYAML},
+		Data:    H{"foo": "bar"},
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "foo = 'bar'\n", w.Body.String())
+	assert.Equal(t, "application/toml; charset=utf-8", w.Header().Get("Content-Type"))
+}
+
 func TestContextNegotiationWithHTML(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, router := CreateTestContext(w)
@@ -1254,6 +1323,14 @@ func TestContextNegotiationFormatCustom(t *testing.T) {
 	assert.Equal(t, MIMEJSON, c.NegotiateFormat(MIMEJSON))
 }
 
+func TestContextNegotiationFormat2(t *testing.T) {
+	c, _ := CreateTestContext(httptest.NewRecorder())
+	c.Request, _ = http.NewRequest("POST", "/", nil)
+	c.Request.Header.Add("Accept", "image/tiff-fx")
+
+	assert.Equal(t, "", c.NegotiateFormat("image/tiff"))
+}
+
 func TestContextIsAborted(t *testing.T) {
 	c, _ := CreateTestContext(httptest.NewRecorder())
 	assert.False(t, c.IsAborted())
@@ -1319,12 +1396,12 @@ func TestContextError(t *testing.T) {
 	assert.Empty(t, c.Errors)
 
 	firstErr := errors.New("first error")
-	c.Error(firstErr) // nolint: errcheck
+	c.Error(firstErr) //nolint: errcheck
 	assert.Len(t, c.Errors, 1)
 	assert.Equal(t, "Error #01: first error\n", c.Errors.String())
 
 	secondErr := errors.New("second error")
-	c.Error(&Error{ // nolint: errcheck
+	c.Error(&Error{ //nolint: errcheck
 		Err:  secondErr,
 		Meta: "some data 2",
 		Type: ErrorTypePublic,
@@ -1346,13 +1423,13 @@ func TestContextError(t *testing.T) {
 			t.Error("didn't panic")
 		}
 	}()
-	c.Error(nil) // nolint: errcheck
+	c.Error(nil) //nolint: errcheck
 }
 
 func TestContextTypedError(t *testing.T) {
 	c, _ := CreateTestContext(httptest.NewRecorder())
-	c.Error(errors.New("externo 0")).SetType(ErrorTypePublic)  // nolint: errcheck
-	c.Error(errors.New("interno 0")).SetType(ErrorTypePrivate) // nolint: errcheck
+	c.Error(errors.New("externo 0")).SetType(ErrorTypePublic)  //nolint: errcheck
+	c.Error(errors.New("interno 0")).SetType(ErrorTypePrivate) //nolint: errcheck
 
 	for _, err := range c.Errors.ByType(ErrorTypePublic) {
 		assert.Equal(t, ErrorTypePublic, err.Type)
@@ -1367,7 +1444,7 @@ func TestContextAbortWithError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := CreateTestContext(w)
 
-	c.AbortWithError(http.StatusUnauthorized, errors.New("bad input")).SetMeta("some input") // nolint: errcheck
+	c.AbortWithError(http.StatusUnauthorized, errors.New("bad input")).SetMeta("some input") //nolint: errcheck
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Equal(t, abortIndex, c.index)
@@ -1626,6 +1703,23 @@ func TestContextBindWithYAML(t *testing.T) {
 	assert.Equal(t, 0, w.Body.Len())
 }
 
+func TestContextBindWithTOML(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+
+	c.Request, _ = http.NewRequest("POST", "/", bytes.NewBufferString("foo = 'bar'\nbar = 'foo'"))
+	c.Request.Header.Add("Content-Type", MIMEXML) // set fake content-type
+
+	var obj struct {
+		Foo string `toml:"foo"`
+		Bar string `toml:"bar"`
+	}
+	assert.NoError(t, c.BindTOML(&obj))
+	assert.Equal(t, "foo", obj.Bar)
+	assert.Equal(t, "bar", obj.Foo)
+	assert.Equal(t, 0, w.Body.Len())
+}
+
 func TestContextBadAutoBind(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := CreateTestContext(w)
@@ -1759,6 +1853,23 @@ func TestContextShouldBindWithYAML(t *testing.T) {
 	assert.Equal(t, 0, w.Body.Len())
 }
 
+func TestContextShouldBindWithTOML(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := CreateTestContext(w)
+
+	c.Request, _ = http.NewRequest("POST", "/", bytes.NewBufferString("foo='bar'\nbar= 'foo'"))
+	c.Request.Header.Add("Content-Type", MIMETOML) // set fake content-type
+
+	var obj struct {
+		Foo string `toml:"foo"`
+		Bar string `toml:"bar"`
+	}
+	assert.NoError(t, c.ShouldBindTOML(&obj))
+	assert.Equal(t, "foo", obj.Bar)
+	assert.Equal(t, "bar", obj.Foo)
+	assert.Equal(t, 0, w.Body.Len())
+}
+
 func TestContextBadAutoShouldBind(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := CreateTestContext(w)
@@ -1866,6 +1977,7 @@ func TestContextGolangContext(t *testing.T) {
 	assert.Equal(t, ti, time.Time{})
 	assert.False(t, ok)
 	assert.Equal(t, c.Value(0), c.Request)
+	assert.Equal(t, c.Value(ContextKey), c)
 	assert.Nil(t, c.Value("foo"))
 
 	c.Set("foo", "bar")
@@ -2064,13 +2176,37 @@ func TestRemoteIPFail(t *testing.T) {
 	assert.False(t, trust)
 }
 
+func TestHasRequestContext(t *testing.T) {
+	c, _ := CreateTestContext(httptest.NewRecorder())
+	assert.False(t, c.hasRequestContext(), "no request, no fallback")
+	c.engine.ContextWithFallback = true
+	assert.False(t, c.hasRequestContext(), "no request, has fallback")
+	c.Request, _ = http.NewRequest(http.MethodGet, "/", nil)
+	assert.True(t, c.hasRequestContext(), "has request, has fallback")
+	c.Request, _ = http.NewRequestWithContext(nil, "", "", nil) //nolint:staticcheck
+	assert.False(t, c.hasRequestContext(), "has request with nil ctx, has fallback")
+	c.engine.ContextWithFallback = false
+	assert.False(t, c.hasRequestContext(), "has request, no fallback")
+
+	c = &Context{}
+	assert.False(t, c.hasRequestContext(), "no request, no engine")
+	c.Request, _ = http.NewRequest(http.MethodGet, "/", nil)
+	assert.False(t, c.hasRequestContext(), "has request, no engine")
+}
+
 func TestContextWithFallbackDeadlineFromRequestContext(t *testing.T) {
-	c := &Context{}
+	c, _ := CreateTestContext(httptest.NewRecorder())
+	// enable ContextWithFallback feature flag
+	c.engine.ContextWithFallback = true
+
 	deadline, ok := c.Deadline()
 	assert.Zero(t, deadline)
 	assert.False(t, ok)
 
-	c2 := &Context{}
+	c2, _ := CreateTestContext(httptest.NewRecorder())
+	// enable ContextWithFallback feature flag
+	c2.engine.ContextWithFallback = true
+
 	c2.Request, _ = http.NewRequest(http.MethodGet, "/", nil)
 	d := time.Now().Add(time.Second)
 	ctx, cancel := context.WithDeadline(context.Background(), d)
@@ -2082,10 +2218,16 @@ func TestContextWithFallbackDeadlineFromRequestContext(t *testing.T) {
 }
 
 func TestContextWithFallbackDoneFromRequestContext(t *testing.T) {
-	c := &Context{}
+	c, _ := CreateTestContext(httptest.NewRecorder())
+	// enable ContextWithFallback feature flag
+	c.engine.ContextWithFallback = true
+
 	assert.Nil(t, c.Done())
 
-	c2 := &Context{}
+	c2, _ := CreateTestContext(httptest.NewRecorder())
+	// enable ContextWithFallback feature flag
+	c2.engine.ContextWithFallback = true
+
 	c2.Request, _ = http.NewRequest(http.MethodGet, "/", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	c2.Request = c2.Request.WithContext(ctx)
@@ -2094,10 +2236,16 @@ func TestContextWithFallbackDoneFromRequestContext(t *testing.T) {
 }
 
 func TestContextWithFallbackErrFromRequestContext(t *testing.T) {
-	c := &Context{}
+	c, _ := CreateTestContext(httptest.NewRecorder())
+	// enable ContextWithFallback feature flag
+	c.engine.ContextWithFallback = true
+
 	assert.Nil(t, c.Err())
 
-	c2 := &Context{}
+	c2, _ := CreateTestContext(httptest.NewRecorder())
+	// enable ContextWithFallback feature flag
+	c2.engine.ContextWithFallback = true
+
 	c2.Request, _ = http.NewRequest(http.MethodGet, "/", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	c2.Request = c2.Request.WithContext(ctx)
@@ -2106,19 +2254,21 @@ func TestContextWithFallbackErrFromRequestContext(t *testing.T) {
 	assert.EqualError(t, c2.Err(), context.Canceled.Error())
 }
 
-type contextKey string
-
 func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
+	type contextKey string
+
 	tests := []struct {
 		name             string
-		getContextAndKey func() (*Context, interface{})
-		value            interface{}
+		getContextAndKey func() (*Context, any)
+		value            any
 	}{
 		{
 			name: "c with struct context key",
-			getContextAndKey: func() (*Context, interface{}) {
+			getContextAndKey: func() (*Context, any) {
 				var key struct{}
-				c := &Context{}
+				c, _ := CreateTestContext(httptest.NewRecorder())
+				// enable ContextWithFallback feature flag
+				c.engine.ContextWithFallback = true
 				c.Request, _ = http.NewRequest("POST", "/", nil)
 				c.Request = c.Request.WithContext(context.WithValue(context.TODO(), key, "value"))
 				return c, key
@@ -2127,8 +2277,10 @@ func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 		},
 		{
 			name: "c with string context key",
-			getContextAndKey: func() (*Context, interface{}) {
-				c := &Context{}
+			getContextAndKey: func() (*Context, any) {
+				c, _ := CreateTestContext(httptest.NewRecorder())
+				// enable ContextWithFallback feature flag
+				c.engine.ContextWithFallback = true
 				c.Request, _ = http.NewRequest("POST", "/", nil)
 				c.Request = c.Request.WithContext(context.WithValue(context.TODO(), contextKey("key"), "value"))
 				return c, contextKey("key")
@@ -2137,16 +2289,21 @@ func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 		},
 		{
 			name: "c with nil http.Request",
-			getContextAndKey: func() (*Context, interface{}) {
-				c := &Context{}
+			getContextAndKey: func() (*Context, any) {
+				c, _ := CreateTestContext(httptest.NewRecorder())
+				// enable ContextWithFallback feature flag
+				c.engine.ContextWithFallback = true
+				c.Request = nil
 				return c, "key"
 			},
 			value: nil,
 		},
 		{
 			name: "c with nil http.Request.Context()",
-			getContextAndKey: func() (*Context, interface{}) {
-				c := &Context{}
+			getContextAndKey: func() (*Context, any) {
+				c, _ := CreateTestContext(httptest.NewRecorder())
+				// enable ContextWithFallback feature flag
+				c.engine.ContextWithFallback = true
 				c.Request, _ = http.NewRequest("POST", "/", nil)
 				return c, "key"
 			},
@@ -2161,6 +2318,70 @@ func TestContextWithFallbackValueFromRequestContext(t *testing.T) {
 	}
 }
 
+func TestContextCopyShouldNotCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ensureRequestIsOver := make(chan struct{})
+
+	wg := &sync.WaitGroup{}
+
+	r := New()
+	r.GET("/", func(ginctx *Context) {
+		wg.Add(1)
+
+		ginctx = ginctx.Copy()
+
+		// start async goroutine for calling srv
+		go func() {
+			defer wg.Done()
+
+			<-ensureRequestIsOver // ensure request is done
+
+			req, err := http.NewRequestWithContext(ginctx, http.MethodGet, srv.URL, nil)
+			must(err)
+
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Error(fmt.Errorf("request error: %w", err))
+				return
+			}
+
+			if res.StatusCode != http.StatusOK {
+				t.Error(fmt.Errorf("unexpected status code: %s", res.Status))
+			}
+		}()
+	})
+
+	l, err := net.Listen("tcp", ":0")
+	must(err)
+	go func() {
+		s := &http.Server{
+			Handler: r,
+		}
+
+		must(s.Serve(l))
+	}()
+
+	addr := strings.Split(l.Addr().String(), ":")
+	res, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/", addr[len(addr)-1]))
+	if err != nil {
+		t.Error(fmt.Errorf("request error: %w", err))
+		return
+	}
+
+	close(ensureRequestIsOver)
+
+	if res.StatusCode != http.StatusOK {
+		t.Error(fmt.Errorf("unexpected status code: %s", res.Status))
+		return
+	}
+
+	wg.Wait()
+}
+
 func TestContextAddParam(t *testing.T) {
 	c := &Context{}
 	id := "id"
@@ -2170,4 +2391,57 @@ func TestContextAddParam(t *testing.T) {
 	v, ok := c.Params.Get(id)
 	assert.Equal(t, ok, true)
 	assert.Equal(t, value, v)
+}
+
+func TestCreateTestContextWithRouteParams(t *testing.T) {
+	w := httptest.NewRecorder()
+	engine := New()
+	engine.GET("/:action/:name", func(ctx *Context) {
+		ctx.String(http.StatusOK, "%s %s", ctx.Param("action"), ctx.Param("name"))
+	})
+	c := CreateTestContextOnly(w, engine)
+	c.Request, _ = http.NewRequest(http.MethodGet, "/hello/gin", nil)
+	engine.HandleContext(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "hello gin", w.Body.String())
+}
+
+type interceptedWriter struct {
+	ResponseWriter
+	b *bytes.Buffer
+}
+
+func (i interceptedWriter) WriteHeader(code int) {
+	i.Header().Del("X-Test")
+	i.ResponseWriter.WriteHeader(code)
+}
+
+func TestInterceptedHeader(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, r := CreateTestContext(w)
+
+	r.Use(func(c *Context) {
+		i := interceptedWriter{
+			ResponseWriter: c.Writer,
+			b:              bytes.NewBuffer(nil),
+		}
+		c.Writer = i
+		c.Next()
+		c.Header("X-Test", "overridden")
+		c.Writer = i.ResponseWriter
+	})
+	r.GET("/", func(c *Context) {
+		c.Header("X-Test", "original")
+		c.Header("X-Test-2", "present")
+		c.String(http.StatusOK, "hello world")
+	})
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	r.HandleContext(c)
+	// Result() has headers frozen when WriteHeaderNow() has been called
+	// Compared to this time, this is when the response headers will be flushed
+	// As response is flushed on c.String, the Header cannot be set by the first
+	// middleware. Assert this
+	assert.Equal(t, "", w.Result().Header.Get("X-Test"))
+	assert.Equal(t, "present", w.Result().Header.Get("X-Test-2"))
 }

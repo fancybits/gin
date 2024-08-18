@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -8,7 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"html/template"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/net/http2"
 )
 
 func formatAsDate(t time.Time) string {
@@ -42,7 +43,7 @@ func setupHTMLFiles(t *testing.T, mode string, tls bool, loadMethod func(*Engine
 			c.HTML(http.StatusOK, "hello.tmpl", map[string]string{"name": "world"})
 		})
 		router.GET("/raw", func(c *Context) {
-			c.HTML(http.StatusOK, "raw.tmpl", map[string]interface{}{
+			c.HTML(http.StatusOK, "raw.tmpl", map[string]any{
 				"now": time.Date(2017, 07, 01, 0, 0, 0, 0, time.UTC),
 			})
 		})
@@ -72,10 +73,48 @@ func TestLoadHTMLGlobDebugMode(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
+	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
+}
+
+func TestH2c(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Error(err)
+	}
+	r := Default()
+	r.UseH2C = true
+	r.GET("/", func(c *Context) {
+		c.String(200, "<h1>Hello world</h1>")
+	})
+	go func() {
+		err := http.Serve(ln, r.Handler())
+		if err != nil {
+			t.Log(err)
+		}
+	}()
+	defer ln.Close()
+
+	url := "http://" + ln.Addr().String() + "/"
+
+	httpClient := http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(netw, addr string, cfg *tls.Config) (net.Conn, error) {
+				return net.Dial(netw, addr)
+			},
+		},
+	}
+
+	res, err := httpClient.Get(url)
+	if err != nil {
+		t.Error(err)
+	}
+
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -92,10 +131,10 @@ func TestLoadHTMLGlobTestMode(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -112,10 +151,10 @@ func TestLoadHTMLGlobReleaseMode(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -139,10 +178,10 @@ func TestLoadHTMLGlobUsingTLS(t *testing.T) {
 	client := &http.Client{Transport: tr}
 	res, err := client.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -159,11 +198,11 @@ func TestLoadHTMLGlobFromFuncMap(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/raw", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
-	assert.Equal(t, "Date: 2017/07/01\n", string(resp))
+	resp, _ := io.ReadAll(res.Body)
+	assert.Equal(t, "Date: 2017/07/01", string(resp))
 }
 
 func init() {
@@ -190,10 +229,10 @@ func TestLoadHTMLFilesTestMode(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -210,10 +249,10 @@ func TestLoadHTMLFilesDebugMode(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -230,10 +269,10 @@ func TestLoadHTMLFilesReleaseMode(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -257,10 +296,10 @@ func TestLoadHTMLFilesUsingTLS(t *testing.T) {
 	client := &http.Client{Transport: tr}
 	res, err := client.Get(fmt.Sprintf("%s/test", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
+	resp, _ := io.ReadAll(res.Body)
 	assert.Equal(t, "<h1>Hello world</h1>", string(resp))
 }
 
@@ -277,11 +316,11 @@ func TestLoadHTMLFilesFuncMap(t *testing.T) {
 
 	res, err := http.Get(fmt.Sprintf("%s/raw", ts.URL))
 	if err != nil {
-		fmt.Println(err)
+		t.Error(err)
 	}
 
-	resp, _ := ioutil.ReadAll(res.Body)
-	assert.Equal(t, "Date: 2017/07/01\n", string(resp))
+	resp, _ := io.ReadAll(res.Body)
+	assert.Equal(t, "Date: 2017/07/01", string(resp))
 }
 
 func TestAddRoute(t *testing.T) {
@@ -428,7 +467,7 @@ func TestNoMethodWithGlobalHandlers(t *testing.T) {
 	compareFunc(t, router.allNoMethod[2], middleware0)
 }
 
-func compareFunc(t *testing.T, a, b interface{}) {
+func compareFunc(t *testing.T, a, b any) {
 	sf1 := reflect.ValueOf(a)
 	sf2 := reflect.ValueOf(b)
 	if sf1.Pointer() != sf2.Pointer() {

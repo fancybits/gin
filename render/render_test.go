@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -8,12 +8,14 @@ import (
 	"encoding/xml"
 	"errors"
 	"html/template"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin/internal/json"
 	testdata "github.com/gin-gonic/gin/testdata/protoexample"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
@@ -24,7 +26,7 @@ import (
 
 func TestRenderJSON(t *testing.T) {
 	w := httptest.NewRecorder()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"foo":  "bar",
 		"html": "<b>",
 	}
@@ -39,17 +41,17 @@ func TestRenderJSON(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
 }
 
-func TestRenderJSONPanics(t *testing.T) {
+func TestRenderJSONError(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := make(chan int)
 
 	// json: unsupported type: chan int
-	assert.Panics(t, func() { assert.NoError(t, (JSON{data}).Render(w)) })
+	assert.Error(t, (JSON{data}).Render(w))
 }
 
 func TestRenderIndentedJSON(t *testing.T) {
 	w := httptest.NewRecorder()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"foo": "bar",
 		"bar": "foo",
 	}
@@ -72,7 +74,7 @@ func TestRenderIndentedJSONPanics(t *testing.T) {
 
 func TestRenderSecureJSON(t *testing.T) {
 	w1 := httptest.NewRecorder()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"foo": "bar",
 	}
 
@@ -86,7 +88,7 @@ func TestRenderSecureJSON(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", w1.Header().Get("Content-Type"))
 
 	w2 := httptest.NewRecorder()
-	datas := []map[string]interface{}{{
+	datas := []map[string]any{{
 		"foo": "bar",
 	}, {
 		"bar": "foo",
@@ -109,7 +111,7 @@ func TestRenderSecureJSONFail(t *testing.T) {
 
 func TestRenderJsonpJSON(t *testing.T) {
 	w1 := httptest.NewRecorder()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"foo": "bar",
 	}
 
@@ -123,7 +125,7 @@ func TestRenderJsonpJSON(t *testing.T) {
 	assert.Equal(t, "application/javascript; charset=utf-8", w1.Header().Get("Content-Type"))
 
 	w2 := httptest.NewRecorder()
-	datas := []map[string]interface{}{{
+	datas := []map[string]any{{
 		"foo": "bar",
 	}, {
 		"bar": "foo",
@@ -135,9 +137,54 @@ func TestRenderJsonpJSON(t *testing.T) {
 	assert.Equal(t, "application/javascript; charset=utf-8", w2.Header().Get("Content-Type"))
 }
 
+type errorWriter struct {
+	bufString string
+	*httptest.ResponseRecorder
+}
+
+var _ http.ResponseWriter = (*errorWriter)(nil)
+
+func (w *errorWriter) Write(buf []byte) (int, error) {
+	if string(buf) == w.bufString {
+		return 0, errors.New(`write "` + w.bufString + `" error`)
+	}
+	return w.ResponseRecorder.Write(buf)
+}
+
+func TestRenderJsonpJSONError(t *testing.T) {
+	ew := &errorWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+
+	jsonpJSON := JsonpJSON{
+		Callback: "foo",
+		Data: map[string]string{
+			"foo": "bar",
+		},
+	}
+
+	cb := template.JSEscapeString(jsonpJSON.Callback)
+	ew.bufString = cb
+	err := jsonpJSON.Render(ew) // error was returned while writing callback
+	assert.Equal(t, `write "`+cb+`" error`, err.Error())
+
+	ew.bufString = `(`
+	err = jsonpJSON.Render(ew)
+	assert.Equal(t, `write "`+`(`+`" error`, err.Error())
+
+	data, _ := json.Marshal(jsonpJSON.Data) // error was returned while writing data
+	ew.bufString = string(data)
+	err = jsonpJSON.Render(ew)
+	assert.Equal(t, `write "`+string(data)+`" error`, err.Error())
+
+	ew.bufString = `);`
+	err = jsonpJSON.Render(ew)
+	assert.Equal(t, `write "`+`);`+`" error`, err.Error())
+}
+
 func TestRenderJsonpJSONError2(t *testing.T) {
 	w := httptest.NewRecorder()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"foo": "bar",
 	}
 	(JsonpJSON{"", data}).WriteContentType(w)
@@ -161,7 +208,7 @@ func TestRenderJsonpJSONFail(t *testing.T) {
 
 func TestRenderAsciiJSON(t *testing.T) {
 	w1 := httptest.NewRecorder()
-	data1 := map[string]interface{}{
+	data1 := map[string]any{
 		"lang": "GO语言",
 		"tag":  "<br>",
 	}
@@ -173,7 +220,7 @@ func TestRenderAsciiJSON(t *testing.T) {
 	assert.Equal(t, "application/json", w1.Header().Get("Content-Type"))
 
 	w2 := httptest.NewRecorder()
-	data2 := float64(3.1415926)
+	data2 := 3.1415926
 
 	err = (AsciiJSON{data2}).Render(w2)
 	assert.NoError(t, err)
@@ -190,7 +237,7 @@ func TestRenderAsciiJSONFail(t *testing.T) {
 
 func TestRenderPureJSON(t *testing.T) {
 	w := httptest.NewRecorder()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"foo":  "bar",
 		"html": "<b>",
 	}
@@ -200,7 +247,7 @@ func TestRenderPureJSON(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
 }
 
-type xmlmap map[string]interface{}
+type xmlmap map[string]any
 
 // Allows type H to be used with xml.Marshal
 func (h xmlmap) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
@@ -237,20 +284,41 @@ b:
 
 	err := (YAML{data}).Render(w)
 	assert.NoError(t, err)
-	assert.Equal(t, "\"\\na : Easy!\\nb:\\n\\tc: 2\\n\\td: [3, 4]\\n\\t\"\n", w.Body.String())
+	assert.Equal(t, "|4-\n    a : Easy!\n    b:\n    \tc: 2\n    \td: [3, 4]\n    \t\n", w.Body.String())
 	assert.Equal(t, "application/x-yaml; charset=utf-8", w.Header().Get("Content-Type"))
 }
 
 type fail struct{}
 
 // Hook MarshalYAML
-func (ft *fail) MarshalYAML() (interface{}, error) {
+func (ft *fail) MarshalYAML() (any, error) {
 	return nil, errors.New("fail")
 }
 
 func TestRenderYAMLFail(t *testing.T) {
 	w := httptest.NewRecorder()
 	err := (YAML{&fail{}}).Render(w)
+	assert.Error(t, err)
+}
+
+func TestRenderTOML(t *testing.T) {
+	w := httptest.NewRecorder()
+	data := map[string]any{
+		"foo":  "bar",
+		"html": "<b>",
+	}
+	(TOML{data}).WriteContentType(w)
+	assert.Equal(t, "application/toml; charset=utf-8", w.Header().Get("Content-Type"))
+
+	err := (TOML{data}).Render(w)
+	assert.NoError(t, err)
+	assert.Equal(t, "foo = 'bar'\nhtml = '<b>'\n", w.Body.String())
+	assert.Equal(t, "application/toml; charset=utf-8", w.Header().Get("Content-Type"))
+}
+
+func TestRenderTOMLFail(t *testing.T) {
+	w := httptest.NewRecorder()
+	err := (TOML{net.IPv4bcast}).Render(w)
 	assert.Error(t, err)
 }
 
@@ -358,13 +426,13 @@ func TestRenderString(t *testing.T) {
 
 	(String{
 		Format: "hello %s %d",
-		Data:   []interface{}{},
+		Data:   []any{},
 	}).WriteContentType(w)
 	assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
 
 	err := (String{
 		Format: "hola %s %d",
-		Data:   []interface{}{"manu", 2},
+		Data:   []any{"manu", 2},
 	}).Render(w)
 
 	assert.NoError(t, err)
@@ -377,7 +445,7 @@ func TestRenderStringLenZero(t *testing.T) {
 
 	err := (String{
 		Format: "hola %s %d",
-		Data:   []interface{}{},
+		Data:   []any{},
 	}).Render(w)
 
 	assert.NoError(t, err)
@@ -390,7 +458,7 @@ func TestRenderHTMLTemplate(t *testing.T) {
 	templ := template.Must(template.New("t").Parse(`Hello {{.name}}`))
 
 	htmlRender := HTMLProduction{Template: templ}
-	instance := htmlRender.Instance("t", map[string]interface{}{
+	instance := htmlRender.Instance("t", map[string]any{
 		"name": "alexandernyquist",
 	})
 
@@ -406,7 +474,7 @@ func TestRenderHTMLTemplateEmptyName(t *testing.T) {
 	templ := template.Must(template.New("").Parse(`Hello {{.name}}`))
 
 	htmlRender := HTMLProduction{Template: templ}
-	instance := htmlRender.Instance("", map[string]interface{}{
+	instance := htmlRender.Instance("", map[string]any{
 		"name": "alexandernyquist",
 	})
 
@@ -425,7 +493,7 @@ func TestRenderHTMLDebugFiles(t *testing.T) {
 		Delims:  Delims{Left: "{[{", Right: "}]}"},
 		FuncMap: nil,
 	}
-	instance := htmlRender.Instance("hello.tmpl", map[string]interface{}{
+	instance := htmlRender.Instance("hello.tmpl", map[string]any{
 		"name": "thinkerou",
 	})
 
@@ -444,7 +512,7 @@ func TestRenderHTMLDebugGlob(t *testing.T) {
 		Delims:  Delims{Left: "{[{", Right: "}]}"},
 		FuncMap: nil,
 	}
-	instance := htmlRender.Instance("hello.tmpl", map[string]interface{}{
+	instance := htmlRender.Instance("hello.tmpl", map[string]any{
 		"name": "thinkerou",
 	})
 

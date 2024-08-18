@@ -1,4 +1,4 @@
-// Copyright 2019 Gin Core Team.  All rights reserved.
+// Copyright 2019 Gin Core Team. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -6,7 +6,7 @@ package binding
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"testing"
@@ -76,7 +76,7 @@ func TestFormMultipartBindingBindError(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		s    interface{}
+		s    any
 	}{
 		{"wrong type", &struct {
 			Files int `form:"file"`
@@ -129,7 +129,7 @@ func assertMultipartFileHeader(t *testing.T, fh *multipart.FileHeader, file test
 	fl, err := fh.Open()
 	assert.NoError(t, err)
 
-	body, err := ioutil.ReadAll(fl)
+	body, err := io.ReadAll(fl)
 	assert.NoError(t, err)
 	assert.Equal(t, string(file.Content), string(body))
 

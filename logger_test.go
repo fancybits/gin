@@ -1,14 +1,14 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
 package gin
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +20,7 @@ func init() {
 }
 
 func TestLogger(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 	router := New()
 	router.Use(LoggerWithWriter(buffer))
 	router.GET("/example", func(c *Context) {})
@@ -84,7 +84,7 @@ func TestLogger(t *testing.T) {
 }
 
 func TestLoggerWithConfig(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 	router := New()
 	router.Use(LoggerWithConfig(LoggerConfig{Output: buffer}))
 	router.GET("/example", func(c *Context) {})
@@ -148,7 +148,7 @@ func TestLoggerWithConfig(t *testing.T) {
 }
 
 func TestLoggerWithFormatter(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 
 	d := DefaultWriter
 	DefaultWriter = buffer
@@ -181,8 +181,8 @@ func TestLoggerWithFormatter(t *testing.T) {
 
 func TestLoggerWithConfigFormatting(t *testing.T) {
 	var gotParam LogFormatterParams
-	var gotKeys map[string]interface{}
-	buffer := new(bytes.Buffer)
+	var gotKeys map[string]any
+	buffer := new(strings.Builder)
 
 	router := New()
 	router.engine.trustedCIDRs, _ = router.engine.prepareTrustedCIDRs()
@@ -208,6 +208,7 @@ func TestLoggerWithConfigFormatting(t *testing.T) {
 		// set dummy ClientIP
 		c.Request.Header.Set("X-Forwarded-For", "20.20.20.20")
 		gotKeys = c.Keys
+		time.Sleep(time.Millisecond)
 	})
 	PerformRequest(router, "GET", "/example?a=100")
 
@@ -357,13 +358,13 @@ func TestErrorLogger(t *testing.T) {
 	router := New()
 	router.Use(ErrorLogger())
 	router.GET("/error", func(c *Context) {
-		c.Error(errors.New("this is an error")) // nolint: errcheck
+		c.Error(errors.New("this is an error")) //nolint: errcheck
 	})
 	router.GET("/abort", func(c *Context) {
-		c.AbortWithError(http.StatusUnauthorized, errors.New("no authorized")) // nolint: errcheck
+		c.AbortWithError(http.StatusUnauthorized, errors.New("no authorized")) //nolint: errcheck
 	})
 	router.GET("/print", func(c *Context) {
-		c.Error(errors.New("this is an error")) // nolint: errcheck
+		c.Error(errors.New("this is an error")) //nolint: errcheck
 		c.String(http.StatusInternalServerError, "hola!")
 	})
 
@@ -381,7 +382,7 @@ func TestErrorLogger(t *testing.T) {
 }
 
 func TestLoggerWithWriterSkippingPaths(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 	router := New()
 	router.Use(LoggerWithWriter(buffer, "/skipped"))
 	router.GET("/logged", func(c *Context) {})
@@ -396,7 +397,7 @@ func TestLoggerWithWriterSkippingPaths(t *testing.T) {
 }
 
 func TestLoggerWithConfigSkippingPaths(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 	router := New()
 	router.Use(LoggerWithConfig(LoggerConfig{
 		Output:    buffer,

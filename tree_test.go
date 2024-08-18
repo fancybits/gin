@@ -357,7 +357,7 @@ func TestUnescapeParameters(t *testing.T) {
 	checkPriorities(t, tree)
 }
 
-func catchPanic(testFunc func()) (recv interface{}) {
+func catchPanic(testFunc func()) (recv any) {
 	defer func() {
 		recv = recover()
 	}()
@@ -681,6 +681,26 @@ func TestTreeRootTrailingSlashRedirect(t *testing.T) {
 		t.Fatalf("non-nil handler")
 	} else if value.tsr {
 		t.Errorf("expected no TSR recommendation")
+	}
+}
+
+func TestRedirectTrailingSlash(t *testing.T) {
+	var data = []struct {
+		path string
+	}{
+		{"/hello/:name"},
+		{"/hello/:name/123"},
+		{"/hello/:name/234"},
+	}
+
+	node := &node{}
+	for _, item := range data {
+		node.addRoute(item.path, fakeHandler("test"))
+	}
+
+	value := node.getValue("/hello/abx/", nil, getSkippedNodes(), false)
+	if value.tsr != true {
+		t.Fatalf("want true, is false")
 	}
 }
 

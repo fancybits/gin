@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -28,6 +28,12 @@ var (
 
 func init() {
 	SetMode(TestMode)
+}
+
+func TestResponseWriterUnwrap(t *testing.T) {
+	testWriter := httptest.NewRecorder()
+	writer := &responseWriter{ResponseWriter: testWriter}
+	assert.Same(t, testWriter, writer.Unwrap())
 }
 
 func TestResponseWriterReset(t *testing.T) {
@@ -131,4 +137,22 @@ func TestResponseWriterFlush(t *testing.T) {
 	resp, err := http.Get(testServer.URL)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+func TestResponseWriterStatusCode(t *testing.T) {
+	testWriter := httptest.NewRecorder()
+	writer := &responseWriter{}
+	writer.reset(testWriter)
+	w := ResponseWriter(writer)
+
+	w.WriteHeader(http.StatusOK)
+	w.WriteHeaderNow()
+
+	assert.Equal(t, http.StatusOK, w.Status())
+	assert.True(t, w.Written())
+
+	w.WriteHeader(http.StatusUnauthorized)
+
+	// status must be 200 although we tried to change it
+	assert.Equal(t, http.StatusOK, w.Status())
 }

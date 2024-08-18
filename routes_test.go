@@ -1,4 +1,4 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
@@ -6,7 +6,6 @@ package gin
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,6 +185,54 @@ func TestRouteRedirectTrailingSlash(t *testing.T) {
 	w = PerformRequest(router, http.MethodGet, "/path2/", header{Key: "X-Forwarded-Prefix", Value: "/api/"})
 	assert.Equal(t, 200, w.Code)
 
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "../../api#?"})
+	assert.Equal(t, "/api/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "../../api"})
+	assert.Equal(t, "/api/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path2", header{Key: "X-Forwarded-Prefix", Value: "../../api"})
+	assert.Equal(t, "/api/path2/", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path2", header{Key: "X-Forwarded-Prefix", Value: "/../../api"})
+	assert.Equal(t, "/api/path2/", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "api/../../"})
+	assert.Equal(t, "//path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "api/../../../"})
+	assert.Equal(t, "/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path2", header{Key: "X-Forwarded-Prefix", Value: "../../gin-gonic.com"})
+	assert.Equal(t, "/gin-goniccom/path2/", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path2", header{Key: "X-Forwarded-Prefix", Value: "/../../gin-gonic.com"})
+	assert.Equal(t, "/gin-goniccom/path2/", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "https://gin-gonic.com/#"})
+	assert.Equal(t, "https/gin-goniccom/https/gin-goniccom/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "#api"})
+	assert.Equal(t, "api/api/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "/nor-mal/#?a=1"})
+	assert.Equal(t, "/nor-mal/a1/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
+	w = PerformRequest(router, http.MethodGet, "/path/", header{Key: "X-Forwarded-Prefix", Value: "/nor-mal/%2e%2e/"})
+	assert.Equal(t, "/nor-mal/2e2e/path", w.Header().Get("Location"))
+	assert.Equal(t, 301, w.Code)
+
 	router.RedirectTrailingSlash = false
 
 	w = PerformRequest(router, http.MethodGet, "/path/")
@@ -294,7 +341,7 @@ func TestRouteParamsByNameWithExtraSlash(t *testing.T) {
 func TestRouteStaticFile(t *testing.T) {
 	// SETUP file
 	testRoot, _ := os.Getwd()
-	f, err := ioutil.TempFile(testRoot, "")
+	f, err := os.CreateTemp(testRoot, "")
 	if err != nil {
 		t.Error(err)
 	}
@@ -320,6 +367,40 @@ func TestRouteStaticFile(t *testing.T) {
 
 	w3 := PerformRequest(router, http.MethodHead, "/using_static/"+filename)
 	w4 := PerformRequest(router, http.MethodHead, "/result")
+
+	assert.Equal(t, w3, w4)
+	assert.Equal(t, http.StatusOK, w3.Code)
+}
+
+// TestHandleStaticFile - ensure the static file handles properly
+func TestRouteStaticFileFS(t *testing.T) {
+	// SETUP file
+	testRoot, _ := os.Getwd()
+	f, err := os.CreateTemp(testRoot, "")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(f.Name())
+	_, err = f.WriteString("Gin Web Framework")
+	assert.NoError(t, err)
+	f.Close()
+
+	dir, filename := filepath.Split(f.Name())
+	// SETUP gin
+	router := New()
+	router.Static("/using_static", dir)
+	router.StaticFileFS("/result_fs", filename, Dir(dir, false))
+
+	w := PerformRequest(router, http.MethodGet, "/using_static/"+filename)
+	w2 := PerformRequest(router, http.MethodGet, "/result_fs")
+
+	assert.Equal(t, w, w2)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "Gin Web Framework", w.Body.String())
+	assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
+
+	w3 := PerformRequest(router, http.MethodHead, "/using_static/"+filename)
+	w4 := PerformRequest(router, http.MethodHead, "/result_fs")
 
 	assert.Equal(t, w3, w4)
 	assert.Equal(t, http.StatusOK, w3.Code)
@@ -635,5 +716,24 @@ func TestRouteContextHoldsFullPath(t *testing.T) {
 	})
 
 	w := PerformRequest(router, http.MethodGet, "/not-found")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestEngineHandleMethodNotAllowedCornerCase(t *testing.T) {
+	r := New()
+	r.HandleMethodNotAllowed = true
+
+	base := r.Group("base")
+	base.GET("/metrics", handlerTest1)
+
+	v1 := base.Group("v1")
+
+	v1.GET("/:id/devices", handlerTest1)
+	v1.GET("/user/:id/groups", handlerTest1)
+
+	v1.GET("/orgs/:id", handlerTest1)
+	v1.DELETE("/orgs/:id", handlerTest1)
+
+	w := PerformRequest(r, "GET", "/base/v1/user/groups")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }

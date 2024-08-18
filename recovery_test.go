@@ -1,11 +1,10 @@
-// Copyright 2014 Manu Martinez-Almeida.  All rights reserved.
+// Copyright 2014 Manu Martinez-Almeida. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
 package gin
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,7 +17,7 @@ import (
 )
 
 func TestPanicClean(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 	router := New()
 	password := "my-super-secret-password"
 	router.Use(RecoveryWithWriter(buffer))
@@ -50,7 +49,7 @@ func TestPanicClean(t *testing.T) {
 
 // TestPanicInHandler assert that panic has been recovered.
 func TestPanicInHandler(t *testing.T) {
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 	router := New()
 	router.Use(RecoveryWithWriter(buffer))
 	router.GET("/recovery", func(_ *Context) {
@@ -122,7 +121,7 @@ func TestPanicWithBrokenPipe(t *testing.T) {
 
 	for errno, expectMsg := range expectMsgs {
 		t.Run(expectMsg, func(t *testing.T) {
-			var buf bytes.Buffer
+			var buf strings.Builder
 
 			router := New()
 			router.Use(RecoveryWithWriter(&buf))
@@ -145,10 +144,10 @@ func TestPanicWithBrokenPipe(t *testing.T) {
 }
 
 func TestCustomRecoveryWithWriter(t *testing.T) {
-	errBuffer := new(bytes.Buffer)
-	buffer := new(bytes.Buffer)
+	errBuffer := new(strings.Builder)
+	buffer := new(strings.Builder)
 	router := New()
-	handleRecovery := func(c *Context, err interface{}) {
+	handleRecovery := func(c *Context, err any) {
 		errBuffer.WriteString(err.(string))
 		c.AbortWithStatus(http.StatusBadRequest)
 	}
@@ -179,11 +178,11 @@ func TestCustomRecoveryWithWriter(t *testing.T) {
 }
 
 func TestCustomRecovery(t *testing.T) {
-	errBuffer := new(bytes.Buffer)
-	buffer := new(bytes.Buffer)
+	errBuffer := new(strings.Builder)
+	buffer := new(strings.Builder)
 	router := New()
 	DefaultErrorWriter = buffer
-	handleRecovery := func(c *Context, err interface{}) {
+	handleRecovery := func(c *Context, err any) {
 		errBuffer.WriteString(err.(string))
 		c.AbortWithStatus(http.StatusBadRequest)
 	}
@@ -214,11 +213,11 @@ func TestCustomRecovery(t *testing.T) {
 }
 
 func TestRecoveryWithWriterWithCustomRecovery(t *testing.T) {
-	errBuffer := new(bytes.Buffer)
-	buffer := new(bytes.Buffer)
+	errBuffer := new(strings.Builder)
+	buffer := new(strings.Builder)
 	router := New()
 	DefaultErrorWriter = buffer
-	handleRecovery := func(c *Context, err interface{}) {
+	handleRecovery := func(c *Context, err any) {
 		errBuffer.WriteString(err.(string))
 		c.AbortWithStatus(http.StatusBadRequest)
 	}
