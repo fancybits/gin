@@ -67,6 +67,7 @@ func CustomRecoveryWithWriter(out io.Writer, handle RecoveryFunc) HandlerFunc {
 					if errors.As(ne, &se) {
 						seStr := strings.ToLower(se.Error())
 						if strings.Contains(seStr, "broken pipe") ||
+							strings.HasSuffix(seStr, "endpoint is closed for send") ||
 							strings.Contains(seStr, "connection reset by peer") {
 							brokenPipe = true
 						}
